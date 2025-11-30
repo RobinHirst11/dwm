@@ -235,6 +235,7 @@ static void setup(void);
 static void seturgent(Client *c, int urg);
 static void showhide(Client *c);
 static void sigchld(int unused);
+static void sigreload(int unused);
 static void spawn(const Arg *arg);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
@@ -264,7 +265,7 @@ static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void xrdb(const Arg *arg);
 static void zoom(const Arg *arg);
-
+static volatile sig_atomic_t reload_colors = 0;
 static pid_t getparentprocess(pid_t p);
 static int isdescprocess(pid_t p, pid_t c);
 static Client *swallowingclient(Window w);
@@ -1499,12 +1500,21 @@ restack(Monitor *m)
 void
 run(void)
 {
-	XEvent ev;
-	/* main event loop */
-	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
-		if (handler[ev.type])
-			handler[ev.type](&ev); /* call handler */
+    XEvent ev;
+    XSync(dpy, False);
+    while (running && !XNextEvent(dpy, &ev)) {
+        if (reload_colors) {
+            reload_colors = 0;
+            loadxrdb();
+            int i;
+            for (i = 0; i < LENGTH(colors); i++)
+                scheme[i] = drw_scm_create(drw, colors[i], 3);
+            focus(NULL);
+            arrange(NULL);
+        }
+        if (handler[ev.type])
+            handler[ev.type](&ev);
+    }
 }
 
 void
@@ -1672,6 +1682,7 @@ setup(void)
 
 	/* clean up any zombies immediately */
 	sigchld(0);
+        signal(SIGUSR1, sigreload);
 
 	/* init screen */
 	screen = DefaultScreen(dpy);
@@ -1771,6 +1782,12 @@ sigchld(int unused)
 	if (signal(SIGCHLD, sigchld) == SIG_ERR)
 		die("can't install SIGCHLD handler:");
 	while (0 < waitpid(-1, NULL, WNOHANG));
+}
+
+void
+sigreload(int unused)
+{
+	reload_colors = 1;
 }
 
 void
